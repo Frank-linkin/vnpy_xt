@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta, time
+
+from collections import defaultdict
 from collections.abc import Callable
+from pprint import pformat
 
 from pandas import DataFrame
 from xtquant import (
@@ -13,6 +16,7 @@ from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.object import BarData, TickData, HistoryRequest
 from vnpy.trader.utility import ZoneInfo, get_file_path
 from vnpy.trader.datafeed import BaseDatafeed
+from vnpy.trader.logger import logger
 
 from .xt_config import VIP_ADDRESS_LIST, LISTEN_PORT
 
@@ -41,6 +45,14 @@ EXCHANGE_VT2XT: dict[Exchange, str] = {
 }
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
+DEFAULT_DIVIDEND_TYPE = "none"
+VALID_DIVIDEND_TYPES = {
+    "none",
+    "front",
+    "back",
+    "front_ratio",
+    "back_ratio",
+}
 
 
 class XtDatafeed(BaseDatafeed):
@@ -198,7 +210,13 @@ class XtDatafeed(BaseDatafeed):
             if not n:
                 return history
 
-        df: DataFrame = get_history_df(req, output)
+        raw_response: dict
+        df: DataFrame
+        xt_symbol: str
+        xt_interval: str
+        start: str
+        end: str
+        raw_response, df, xt_symbol, xt_interval, start, end = get_history_payload(req, output)
         if df.empty:
             return history
 
@@ -258,21 +276,26 @@ class XtDatafeed(BaseDatafeed):
         return history
 
 
-def get_history_df(req: HistoryRequest, output: Callable = print) -> DataFrame:
-    """获取历史数据DataFrame"""
+def get_history_payload(req: HistoryRequest, output: Callable = print) -> tuple[dict, DataFrame, str, str, str, str]:
+    """获取历史数据原始响应和DataFrame"""
     symbol: str = req.symbol
     exchange: Exchange = req.exchange
     start_dt: datetime = req.start
     end_dt: datetime = req.end
     interval: Interval = req.interval
+    dividend_type: str = getattr(req, "dividend_type", DEFAULT_DIVIDEND_TYPE)
 
     if not interval:
         interval = Interval.TICK
 
+    if dividend_type not in VALID_DIVIDEND_TYPES:
+        output(f"迅投研查询历史数据失败：不支持的复权参数{dividend_type}")
+        return {}, DataFrame(), "", "", "", ""
+
     xt_interval: str | None = INTERVAL_VT2XT.get(interval, None)
     if not xt_interval:
         output(f"迅投研查询历史数据失败：不支持的时间周期{interval.value}")
-        return DataFrame()
+        return {}, DataFrame(), "", "", "", ""
 
     # 为了查询夜盘数据
     end_dt += timedelta(1)
@@ -286,7 +309,24 @@ def get_history_df(req: HistoryRequest, output: Callable = print) -> DataFrame:
         xt_symbol += "O"
 
     xtdata.download_history_data(xt_symbol, xt_interval, start, end)
-    data: dict = xtdata.get_local_data([], [xt_symbol], xt_interval, start, end, -1, "front_ratio", False)      # 默认等比前复权
+    data: dict = xtdata.get_local_data([], [xt_symbol], xt_interval, start, end, -1, dividend_type, False)
 
-    df: DataFrame = data[xt_symbol]
+    df: DataFrame = data.get(xt_symbol, DataFrame())
+    if df.empty:
+        logger.bind(gateway_name="XT").warning(
+            "query_tick_history返回0条，"
+            f"symbol={req.symbol}，exchange={req.exchange.value}，"
+            f"start={req.start}，end={req.end}，"
+            f"xt_symbol={xt_symbol}，xt_interval={xt_interval}，"
+            f"request_start={start}，request_end={end}，"
+            f"data={pformat(data)}，"
+            f"dividend_type={dividend_type}，"
+            f"dataframe_shape={df.shape}"
+        )
+    return data, df, xt_symbol, xt_interval, start, end
+
+
+def get_history_df(req: HistoryRequest, output: Callable = print) -> DataFrame:
+    """获取历史数据DataFrame"""
+    _, df, _, _, _, _ = get_history_payload(req, output)
     return df
