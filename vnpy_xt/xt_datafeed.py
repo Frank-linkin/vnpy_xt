@@ -218,6 +218,15 @@ class XtDatafeed(BaseDatafeed):
         end: str
         raw_response, df, xt_symbol, xt_interval, start, end = get_history_payload(req, output)
         if df.empty:
+            logger.bind(gateway_name="XT").warning(
+                "query_tick_history返回0条，"
+                f"symbol={req.symbol}，exchange={req.exchange.value}，"
+                f"start={req.start}，end={req.end}，"
+                f"xt_symbol={xt_symbol}，xt_interval={xt_interval}，"
+                f"request_start={start}，request_end={end}，"
+                f"raw_response={pformat(raw_response)}，"
+                f"dataframe_shape={df.shape}"
+            )
             return history
 
         # 遍历解析
@@ -272,6 +281,17 @@ class XtDatafeed(BaseDatafeed):
                 tick.ask_volume_5 = float(askVol[4])
 
             history.append(tick)
+
+        if not history:
+            logger.bind(gateway_name="XT").warning(
+                "query_tick_history解析后返回0条，"
+                f"symbol={req.symbol}，exchange={req.exchange.value}，"
+                f"start={req.start}，end={req.end}，"
+                f"xt_symbol={xt_symbol}，xt_interval={xt_interval}，"
+                f"request_start={start}，request_end={end}，"
+                f"raw_response={pformat(raw_response)}，"
+                f"dataframe_shape={df.shape}"
+            )
 
         return history
 
