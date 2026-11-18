@@ -23,12 +23,14 @@ from .xt_config import VIP_ADDRESS_LIST, LISTEN_PORT
 
 INTERVAL_VT2XT: dict[Interval, str] = {
     Interval.MINUTE: "1m",
+    Interval.MINUTE5: "5m",
     Interval.DAILY: "1d",
-    Interval.TICK: "tick"
+    Interval.TICK: "tick",
 }
 
 INTERVAL_ADJUSTMENT_MAP: dict[Interval, timedelta] = {
     Interval.MINUTE: timedelta(minutes=1),
+    Interval.MINUTE5: timedelta(minutes=5),
     Interval.DAILY: timedelta()         # 日线无需进行调整
 }
 
@@ -140,9 +142,8 @@ class XtDatafeed(BaseDatafeed):
 
         for tp in df.itertuples():
             # 将迅投研时间戳（K线结束时点）转换为VeighNa时间戳（K线开始时点）
-            dt: datetime = datetime.fromtimestamp(tp.time / 1000)
-            dt = dt.replace(tzinfo=CHINA_TZ)
-            dt = dt - adjustment
+            end_dt = datetime.fromtimestamp(tp.time / 1000, tz=CHINA_TZ)
+            dt = end_dt - adjustment
 
             # 日线，过滤尚未走完的当日数据
             if req.interval == Interval.DAILY:
@@ -156,10 +157,10 @@ class XtDatafeed(BaseDatafeed):
             else:
                 if (
                     req.exchange in (Exchange.SSE, Exchange.SZSE, Exchange.BSE, Exchange.CFFEX)
-                    and dt.time() == time(hour=9, minute=29)
+                    and end_dt.time() == time(hour=9, minute=30)
                 ) or (
                     req.exchange in (Exchange.SHFE, Exchange.INE, Exchange.DCE, Exchange.CZCE, Exchange.GFEX)
-                    and dt.time() in (time(hour=8, minute=59), time(hour=20, minute=59))
+                    and end_dt.time() in (time(hour=9), time(hour=21))
                 ):
                     auction_bar = BarData(
                         symbol=req.symbol,
